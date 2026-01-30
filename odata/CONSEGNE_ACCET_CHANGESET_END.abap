@@ -342,7 +342,6 @@
             LOOP AT lt_det ASSIGNING <ls_det> WHERE idrec = ls_cons-idrec.
               <ls_det>-errore = 'E03Errore, la qta accettata deve essere uguale alla qta inviata'.
             ENDLOOP.
-            EXIT.
           ENDIF.
         ENDLOOP.
       ENDIF.
