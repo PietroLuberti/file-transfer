@@ -7,7 +7,7 @@
 **ENDTRY.
 
 *** PL 21102025 alla fine di questo metodo si riporta il metodo
-*** ZCL_ZMM_FIORI_ACCET_RI_DPC_EXT-CHANGESET_END dal quale si è preso
+*** ZCL_ZMM_FIORI_ACCET_RI_DPC_EXT-CHANGESET_END dal quale si ï¿½ preso
 *** inizialmente spunto
 
 
@@ -186,6 +186,7 @@
              suser        TYPE zsuser,
              errore       TYPE text200,
              idcall       TYPE char50,
+             lfdat        TYPE lfdat,      "Data consegna per raggruppamento
            END OF ts_detailoutb .
     TYPES: tt_detailoutb TYPE TABLE OF ts_detailoutb.
     DATA: ls_deta TYPE ts_detailoutb,
@@ -285,6 +286,14 @@
             FROM zmm_cons_flaut
             WHERE vbeln = @ls_ord-vbeln.
 
+      "! Valorizza il campo lfdat nei record di dettaglio per il raggruppamento
+      IF lt_cons[] IS NOT INITIAL.
+        READ TABLE lt_cons INTO ls_cons INDEX 1.
+        LOOP AT lt_det ASSIGNING FIELD-SYMBOL(<fs_det_lfdat>).
+          <fs_det_lfdat>-lfdat = ls_cons-lfdat.
+        ENDLOOP.
+      ENDIF.
+
       IF lt_cons[] IS INITIAL.
         LOOP AT lt_det INTO ls_det.
           CLEAR ls_esiti.
@@ -329,7 +338,7 @@
       ENDLOOP.
 
       IF lf_err = 'X'.
-* se c'è un errore in una posizione va scartata tutta la consegna
+* se c'ï¿½ un errore in una posizione va scartata tutta la consegna
         LOOP AT lt_det INTO ls_det.
           CLEAR ls_esiti.
           MOVE-CORRESPONDING ls_det TO ls_esiti.
@@ -358,7 +367,7 @@
       ENDIF.
 
 
-***** controllo se la consegna è stata già elaborata
+***** controllo se la consegna ï¿½ stata giï¿½ elaborata
       SELECT COUNT(*) INTO @DATA(lf_count)
             FROM zmm_esiti_flaut
             WHERE codice_flusso = 'CONS'
@@ -367,7 +376,7 @@
               AND cod_esito NOT LIKE 'E%'.
 
       IF lf_count > 0.
-* la consegna va scartata perchè già processata
+* la consegna va scartata perchï¿½ giï¿½ processata
         LOOP AT lt_det INTO ls_det.
           CLEAR ls_esiti.
           MOVE-CORRESPONDING ls_det TO ls_esiti.
@@ -377,7 +386,7 @@
           ls_esiti-data_elab = lv_sydatum.
           ls_esiti-ora_elab  = lv_syuzeit.
           ls_esiti-cod_esito = 'E05'.
-          ls_esiti-descr_esito = 'Errore, consegna già elaborata'.
+          ls_esiti-descr_esito = 'Errore, consegna giï¿½ elaborata'.
           APPEND ls_esiti TO lt_esiti.
         ENDLOOP.
 
@@ -390,7 +399,7 @@
       ENDIF.
 
 
-***** controllo se è un'accettazione totale, per ora non sono ammesse accettazioni parziali
+***** controllo se ï¿½ un'accettazione totale, per ora non sono ammesse accettazioni parziali
       CLEAR lf_err.
       LOOP AT lt_cons INTO ls_cons.
         READ TABLE lt_det ASSIGNING <ls_det> WITH KEY idrec = ls_cons-idrec.
@@ -616,7 +625,7 @@
 
 * DMND0012698 rep beg
 *        MOVE 'ACCETTATO'         TO ls_storico-motivo_rett.
-** imposta tutta la quantità del record come "accettata"
+** imposta tutta la quantitï¿½ del record come "accettata"
 *        MOVE <history>-lfimg     TO ls_storico-qta_acc.
         IF <history>-motivo EQ space.
           MOVE 'ACCETTATO'        TO ls_storico-motivo_rett.
@@ -734,6 +743,13 @@
 *        lf_err = 'X'.
 *      ENDIF.
 
+      "! ================================================================
+      "! Creazione documenti materiale tipo 101 tramite BAPI_GOODSMVT_CREATE
+      "! - Elabora solo i record con motivo blank (quantitï¿½ accettate)
+      "! - Raggruppa i record per: vbeln, posnr, lfdat, matnr, charg, motivo
+      "! - Somma le quantitï¿½ (qta_acc) per ogni gruppo
+      "! - Gestisce i codici seriali per materiali con flag 'Q' o 'S'
+      "! ================================================================
 **BAPI
       CLEAR: gs_header, gs_code, gs_item, gs_sernr, gs_return.
       CLEAR: gt_item[], gt_item2[], gt_sernr[], gt_sernr2[], gt_return[].
@@ -751,8 +767,10 @@
 * quelli gestiti a seriale salva una tabellina a parte con i seriali
 * e pulisce il campo charg
 * DMND0012698 rep
-* crea il 101 solo per le quantità accettate
+* crea il 101 solo per le quantitï¿½ accettate
 *      LOOP AT lt_det ASSIGNING FIELD-SYMBOL(<ls_item>).
+      "! Elabora solo i record con motivo blank (quantitï¿½ accettate)
+      "! e prepara i dati per il raggruppamento
       LOOP AT lt_det ASSIGNING FIELD-SYMBOL(<ls_item>) WHERE motivo = space.
         CLEAR ls_det.
         MOVE-CORRESPONDING <ls_item> TO ls_det.
@@ -765,7 +783,9 @@
         APPEND ls_det TO lt_det2.
       ENDLOOP.
 
-
+      "! Ordina i record per raggruppamento in base a:
+      "! vbeln, posnr, lfdat, matnr, charg, motivo
+      SORT lt_det2 BY vbeln posnr lfdat matnr charg motivo.
 
       LOOP AT lt_det2 ASSIGNING FIELD-SYMBOL(<ls_item2>).
         CLEAR ls_det.
@@ -773,7 +793,11 @@
         MOVE-CORRESPONDING <ls_item2> TO ls_det.
         ADD ls_det-qta_acc TO lv_qty.
 
-        AT END OF charg.
+        "! Raggruppa i record in base ai campi chiave:
+        "! vbeln, posnr, lfdat, matnr, charg, motivo
+        "! e crea una posizione del documento materiale per ogni gruppo
+        "! Il controllo viene effettuato sul campo motivo che ï¿½ l'ultimo nella SORT
+        AT END OF motivo.
 
           CLEAR gs_item.
 
@@ -808,6 +832,8 @@
             gs_item-batch    = ls_det-charg.
           ENDIF.
 
+          "! Per i materiali gestiti a QR Code o Serial Number,
+          "! inserisce i codici seriali nel documento materiale
           IF ls_det-tipo_gest EQ 'Q' OR ls_det-tipo_gest EQ 'S'.
 * salva e refresha tabellina serial number
             CLEAR lv_tfill.
@@ -819,10 +845,10 @@
               gs_sernr-matdoc_itm = lv_tfill.
               CASE ls_det-tipo_gest.
                 WHEN 'Q'.
-* per i materiali gestiti a Qrcode (tipo_gest EQ 'Q') --> il serial number è nel campo QRSERNR e il qrcode è nel campo CHARG
+* per i materiali gestiti a Qrcode (tipo_gest EQ 'Q') --> il serial number ï¿½ nel campo QRSERNR e il qrcode ï¿½ nel campo CHARG
                   gs_sernr-serialno = <ls_sernr>-qrsernr.
                 WHEN 'S'.
-* per i materiali gestiti a Serial Number (tipo_gest EQ 'S') --> il serial number è nel campo CHARG
+* per i materiali gestiti a Serial Number (tipo_gest EQ 'S') --> il serial number ï¿½ nel campo CHARG
                   gs_sernr-serialno = <ls_sernr>-charg.
                 WHEN OTHERS.
               ENDCASE.
@@ -954,6 +980,10 @@
         ENDLOOP.
 
 * DMND0012698 ins
+        "! ================================================================
+        "! Elaborazione record con motivo valorizzato (consegne parziali/rifiutate)
+        "! Prepara i dati per il salvataggio nella tabella ZMM_CONS_PARZ
+        "! ================================================================
         READ TABLE lt_cons INTO ls_cons INDEX 1.
         LOOP AT lt_det INTO ls_det WHERE motivo NE space.
           MOVE-CORRESPONDING ls_det TO ls_parz.
@@ -1078,10 +1108,12 @@
       MODIFY zmm_esiti_flaut FROM TABLE lt_esiti.
 
 * DMND0012698 ins
-*      IF lt_parz[] IS NOT INITIAL.
-*        MODIFY zmm_cons_parz FROM TABLE lt_parz.
-*        CLEAR lt_parz[].
-*      ENDIF.
+      "! Salva i dati delle consegne parziali (record con motivo valorizzato)
+      "! nella tabella custom ZMM_CONS_PARZ
+      IF lt_parz[] IS NOT INITIAL.
+        MODIFY zmm_cons_parz FROM TABLE lt_parz.
+        CLEAR lt_parz[].
+      ENDIF.
 
       CALL FUNCTION 'DB_COMMIT'.
 
@@ -1841,7 +1873,7 @@
 ***
 ***        CLEAR gs_zfiori_ris_tmp.
 ***
-***        LOOP AT gt_zfiori_ris_tmp INTO gs_zfiori_ris_tmp. "solo quelle con quantità rifiutata
+***        LOOP AT gt_zfiori_ris_tmp INTO gs_zfiori_ris_tmp. "solo quelle con quantitï¿½ rifiutata
 ***
 ***          CLEAR gs_lips.
 ***          SELECT SINGLE * INTO gs_lips
