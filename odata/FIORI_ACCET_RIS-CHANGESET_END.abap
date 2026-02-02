@@ -40,7 +40,26 @@
              erfme       TYPE meins,
              stato       TYPE char1,
              acc_ris     TYPE zacc_ris,
+             lfdat       TYPE lfdat,
+             flag        TYPE zgestmat,
            END OF ty_tabella.
+
+**! ABAP Doc: Tipo per raggruppamento dati accettati
+    TYPES: BEGIN OF ty_grouped_acc,
+             vbeln   TYPE lifex_cap,
+             posnr   TYPE posnr_vl,
+             lfdat   TYPE lfdat,
+             matnr   TYPE matnr,
+             charg   TYPE z_sernr1,
+             motivo  TYPE zmotivo,
+             qta_acc TYPE zqta_acc,
+             flag    TYPE zgestmat,
+             werks   TYPE werks_d,
+             lgort   TYPE lgort_d,
+             erfme   TYPE meins,
+             ebeln   TYPE ebeln,
+             ebelp   TYPE ebelp,
+           END OF ty_grouped_acc.
 
     DATA: gs_header TYPE bapi2017_gm_head_01,
           gs_code   TYPE bapi2017_gm_code,
@@ -89,6 +108,24 @@
           gs_tabella         TYPE ty_tabella,
           gt_tabella         TYPE TABLE OF ty_tabella.
 
+**! ABAP Doc: Variabili per elaborazione record accettati (motivo = blank)
+    DATA: gt_zfiori_ris_acc  TYPE TABLE OF zfiori_ris_tmp,
+          gs_zfiori_ris_acc  TYPE zfiori_ris_tmp,
+          gt_grouped_acc     TYPE TABLE OF ty_grouped_acc,
+          gs_grouped_acc     TYPE ty_grouped_acc,
+          gt_item_acc        TYPE TABLE OF bapi2017_gm_item_create,
+          gs_item_acc        TYPE bapi2017_gm_item_create,
+          gt_sernr_acc       TYPE TABLE OF bapi2017_gm_serialnumber,
+          gs_sernr_acc       TYPE bapi2017_gm_serialnumber,
+          gt_return_acc      TYPE TABLE OF bapiret2,
+          gs_return_acc      TYPE bapiret2,
+          gv_matdoc          TYPE mblnr,
+          gv_matdocyear      TYPE mjahr.
+
+**! ABAP Doc: Variabile per ZMM_CONS_PARZ
+    DATA: gs_zmm_cons_parz TYPE zmm_cons_parz,
+          gt_zmm_cons_parz TYPE TABLE OF zmm_cons_parz.
+
     DATA lo_container TYPE REF TO /iwbep/if_message_container.
 *FG - Start
     TYPES: BEGIN OF tab,
@@ -102,19 +139,8 @@
           lt_ernam TYPE TABLE OF ernam.
     DATA: lw_usr21 TYPE usr21,
           lw_adr6  TYPE adr6.
-    DATA: lt_mailsubject     TYPE sodocchgi1.
-    DATA: lt_mailrecipients TYPE STANDARD TABLE OF somlrec90,
-          ls_mailrecipients LIKE LINE OF lt_mailrecipients,
-          lt_mailtxt        TYPE STANDARD TABLE OF soli,
-          ls_mailtxt        LIKE LINE OF lt_mailtxt,
-          lt_packing_list   TYPE STANDARD TABLE OF sopcklsti1,
-          ls_packing_list   LIKE LINE OF lt_packing_list.
-    DATA:    lt_zfiori_mail   TYPE TABLE OF zfiori_mail,
-             ls_zfiori_mail   TYPE zfiori_mail,
-             lt_zfiori_gruppi TYPE TABLE OF zfiori_gruppi,
-             ls_zfiori_gruppi TYPE zfiori_gruppi,
-             lv_mtart         TYPE mtart,
-             lv_causale       TYPE zid_az.
+**! ABAP Doc: Variabili email rimosse come da requisito
+    DATA: lv_mtart         TYPE mtart.
 
 *MP Inizio modifiche - SAPECC22_PR57 - 09.01.2022
     DATA: w_setid TYPE sethier-setid,
@@ -379,67 +405,192 @@
         AND movstat = c_movstat3
         AND pickstat = abap_true.
 
-      CLEAR gs_vbkok.
-      gs_vbkok-vbeln_vl = gv_ebeln.
-      gs_vbkok-vbeln = gv_ebeln.
-      gs_vbkok-wabuc = abap_true.
-      gs_vbkok-wadat_ist = sy-datum.
-      gv_commit = abap_true.
-      gv_delivery = gv_ebeln.
+**! ABAP Doc: Elaborazione record accettati (motivo = blank) - Creazione documenti materiale tipo 101
+**! Questa sezione sostituisce la chiamata a WS_DELIVERY_UPDATE_2
+**! I record vengono raggruppati per chiave e la quantità viene sommata
 
-      CALL FUNCTION 'WS_DELIVERY_UPDATE_2'
-        EXPORTING
-          vbkok_wa = gs_vbkok
-          synchron = gv_synchr
-          commit   = gv_commit
-          delivery = gv_delivery
-        TABLES
-          prot     = gt_prot.
+*     Leggi record accettati (con motivo = blank e qta_acc <> 0)
+      SELECT * INTO TABLE gt_zfiori_ris_acc
+        FROM zfiori_ris_tmp
+        WHERE vbeln = gv_lifex
+        AND motivo = space
+        AND qta_acc NE 0.
 
-      LOOP AT gt_prot INTO gs_prot WHERE msgty CA 'EA'.
-        REFRESH gt_zfiori_ris_tmp.
-        gv_symsgno = gs_prot-msgno.
-        lo_container->add_message(
-           iv_msg_type          = gs_prot-msgty
-           iv_msg_id            = gs_prot-msgid
-           iv_msg_number        = gv_symsgno
-           iv_msg_v1            = gs_prot-msgv1
-           iv_msg_v2            = gs_prot-msgv2
-           iv_msg_v3            = gs_prot-msgv3
-           iv_msg_v4            = gs_prot-msgv4
-           iv_is_leading_message     = abap_true
-           iv_add_to_response_header = abap_true ).
+      IF gt_zfiori_ris_acc IS NOT INITIAL.
 
-*popolo tabella di log su backend in caso di errori
-        wa_log_bapi-mandt = sy-mandt.
-        wa_log_bapi-in_idnum = gv_ebeln.
-        MOVE gs_prot-msgno TO wa_log_bapi-znumber.
-        MOVE gs_prot-msgid TO wa_log_bapi-id.
-        MOVE gs_prot-msgty TO wa_log_bapi-type.
-        MOVE gs_prot-msgv1 TO wa_log_bapi-message_v1.
-        MOVE gs_prot-msgv2 TO wa_log_bapi-message_v2.
-        MOVE gs_prot-msgv3 TO wa_log_bapi-message_v3.
-        CALL FUNCTION 'BAPI_MESSAGE_GETDETAIL'
-          EXPORTING
-            id         = wa_log_bapi-id
-            number     = wa_log_bapi-znumber
-            language   = sy-langu
-            textformat = 'NON'
-            message_v1 = wa_log_bapi-message_v1
-            message_v2 = wa_log_bapi-message_v2
-            message_v3 = wa_log_bapi-message_v3
-          IMPORTING
-            message    = wa_log_bapi-message.
-        wa_log_bapi-message_v4 = 'WS_DELIVERY_UPDATE per Fiori'.
-        wa_log_bapi-datum = sy-datum.
-        wa_log_bapi-uzeit = sy-uzeit.
-        wa_log_bapi-nome_report = sy-repid.
-        MODIFY zmm_log_bapi FROM wa_log_bapi.
-        COMMIT WORK AND WAIT.
-        EXIT.
-        v = 1.
-      ENDLOOP.
-      IF sy-subrc NE 0.
+*       Raggruppa i record per chiave e somma qta_acc
+        LOOP AT gt_zfiori_ris_acc INTO gs_zfiori_ris_acc.
+          CLEAR gs_grouped_acc.
+
+*         Ottieni informazioni ordine di acquisto dalla LIPS
+          SELECT SINGLE vgbel, vgpos, werks, lgort
+            INTO (@gs_grouped_acc-ebeln, @gs_grouped_acc-ebelp,
+                  @gs_grouped_acc-werks, @gs_grouped_acc-lgort)
+            FROM lips
+            WHERE vbeln = @gs_zfiori_ris_acc-vbeln
+            AND posnr = @gs_zfiori_ris_acc-posnr.
+
+          gs_grouped_acc-vbeln = gs_zfiori_ris_acc-vbeln.
+          gs_grouped_acc-posnr = gs_zfiori_ris_acc-posnr.
+          gs_grouped_acc-lfdat = gs_zfiori_ris_acc-lfdat.
+          gs_grouped_acc-matnr = gs_zfiori_ris_acc-matnr.
+          gs_grouped_acc-charg = gs_zfiori_ris_acc-charg.
+          gs_grouped_acc-motivo = gs_zfiori_ris_acc-motivo.
+          gs_grouped_acc-flag = gs_zfiori_ris_acc-flag.
+          gs_grouped_acc-erfme = gs_zfiori_ris_acc-erfme.
+          gs_grouped_acc-qta_acc = gs_zfiori_ris_acc-qta_acc.
+
+*         Accumula quantità per chiave usando COLLECT
+          COLLECT gs_grouped_acc INTO gt_grouped_acc.
+
+        ENDLOOP.
+
+*       Prepara header documento materiale
+        CLEAR gs_header.
+        gs_header-pstng_date = sy-datum.
+        gs_header-doc_date = sy-datum.
+        gs_header-ref_doc_no = gv_lifex.
+        gs_code = '01'.  "Movimento merci per ordine di acquisto
+
+*       Prepara posizioni documento materiale
+        DATA: lv_item_no TYPE i VALUE 0.
+
+        LOOP AT gt_grouped_acc INTO gs_grouped_acc.
+          lv_item_no = lv_item_no + 1.
+
+          CLEAR gs_item_acc.
+          gs_item_acc-material = gs_grouped_acc-matnr.
+          gs_item_acc-plant = gs_grouped_acc-werks.
+          gs_item_acc-stge_loc = gs_grouped_acc-lgort.
+          gs_item_acc-move_type = '101'.
+          gs_item_acc-entry_qnt = gs_grouped_acc-qta_acc.
+          gs_item_acc-po_number = gs_grouped_acc-ebeln.
+          gs_item_acc-po_item = gs_grouped_acc-ebelp.
+
+*         Gestione unità di misura
+          CALL FUNCTION 'CONVERSION_EXIT_CUNIT_INPUT'
+            EXPORTING
+              input          = gs_grouped_acc-erfme
+              language       = lv_langu
+            IMPORTING
+              output         = gs_item_acc-entry_uom
+            EXCEPTIONS
+              unit_not_found = 1
+              OTHERS         = 2.
+
+          IF sy-subrc = 1.
+            gs_item_acc-entry_uom = gs_grouped_acc-erfme.
+          ENDIF.
+
+*         Batch se presente
+          IF gs_grouped_acc-charg IS NOT INITIAL AND
+             gs_grouped_acc-flag <> 'Q' AND gs_grouped_acc-flag <> 'S'.
+            gs_item_acc-batch = gs_grouped_acc-charg.
+          ENDIF.
+
+          CONCATENATE gs_grouped_acc-vbeln gs_grouped_acc-posnr INTO gs_item_acc-item_text.
+
+          APPEND gs_item_acc TO gt_item_acc.
+
+*         Gestione numeri seriali per flag Q o S
+          IF gs_grouped_acc-flag = 'Q' OR gs_grouped_acc-flag = 'S'.
+*           Leggi i numeri seriali dalla tabella temporanea
+            SELECT qrsernr
+              INTO @DATA(lv_sernr)
+              FROM zfiori_ris_tmp
+              WHERE vbeln = @gs_grouped_acc-vbeln
+              AND posnr = @gs_grouped_acc-posnr
+              AND matnr = @gs_grouped_acc-matnr
+              AND charg = @gs_grouped_acc-charg
+              AND motivo = @gs_grouped_acc-motivo
+              AND lfdat = @gs_grouped_acc-lfdat
+              AND flag = @gs_grouped_acc-flag
+              AND qta_acc NE 0.
+
+              CLEAR gs_sernr_acc.
+              gs_sernr_acc-matdoc_itm = lv_item_no.
+              gs_sernr_acc-serialno = lv_sernr.
+              APPEND gs_sernr_acc TO gt_sernr_acc.
+
+            ENDSELECT.
+          ENDIF.
+
+        ENDLOOP.
+
+*       Esegui chiamata BAPI per creazione documento materiale
+        IF gt_item_acc IS NOT INITIAL.
+          CALL FUNCTION 'BAPI_GOODSMVT_CREATE'
+            EXPORTING
+              goodsmvt_header  = gs_header
+              goodsmvt_code    = gs_code
+            IMPORTING
+              materialdocument = gv_matdoc
+              matdocumentyear  = gv_matdocyear
+            TABLES
+              goodsmvt_item    = gt_item_acc
+              goodsmvt_serialnumber = gt_sernr_acc
+              return           = gt_return_acc.
+
+*         Gestione errori
+          LOOP AT gt_return_acc INTO gs_return_acc WHERE type CA 'EA'.
+            REFRESH gt_zfiori_ris_tmp.
+            gv_symsgno = gs_return_acc-number.
+            lo_container->add_message(
+               iv_msg_type          = gs_return_acc-type
+               iv_msg_id            = gs_return_acc-id
+               iv_msg_number        = gv_symsgno
+               iv_msg_v1            = gs_return_acc-message_v1
+               iv_msg_v2            = gs_return_acc-message_v2
+               iv_msg_v3            = gs_return_acc-message_v3
+               iv_msg_v4            = gs_return_acc-message_v4
+               iv_is_leading_message     = abap_true
+               iv_add_to_response_header = abap_true ).
+
+*           Log errore
+            wa_log_bapi-mandt = sy-mandt.
+            wa_log_bapi-in_idnum = gv_ebeln.
+            MOVE gs_return_acc-number TO wa_log_bapi-znumber.
+            MOVE gs_return_acc-id TO wa_log_bapi-id.
+            MOVE gs_return_acc-type TO wa_log_bapi-type.
+            MOVE gs_return_acc-message_v1 TO wa_log_bapi-message_v1.
+            MOVE gs_return_acc-message_v2 TO wa_log_bapi-message_v2.
+            MOVE gs_return_acc-message_v3 TO wa_log_bapi-message_v3.
+
+            CALL FUNCTION 'BAPI_MESSAGE_GETDETAIL'
+              EXPORTING
+                id         = wa_log_bapi-id
+                number     = wa_log_bapi-znumber
+                language   = sy-langu
+                textformat = 'NON'
+                message_v1 = wa_log_bapi-message_v1
+                message_v2 = wa_log_bapi-message_v2
+                message_v3 = wa_log_bapi-message_v3
+              IMPORTING
+                message    = wa_log_bapi-message.
+
+            wa_log_bapi-message_v4 = 'BAPI_GOODSMVT_CREATE Accettati'.
+            wa_log_bapi-datum = sy-datum.
+            wa_log_bapi-uzeit = sy-uzeit.
+            wa_log_bapi-nome_report = sy-repid.
+            MODIFY zmm_log_bapi FROM wa_log_bapi.
+            COMMIT WORK AND WAIT.
+            EXIT.
+            v = 1.
+          ENDLOOP.
+
+*         Successo - commit transazione
+          IF v NE 1.
+            CALL FUNCTION 'BAPI_TRANSACTION_COMMIT'
+              EXPORTING
+                wait = 'X'.
+            COMMIT WORK AND WAIT.
+          ENDIF.
+
+        ENDIF.
+
+      ENDIF.
+
+      IF v NE 1.
         LOOP AT gt_zfiori_ris_tmp INTO gs_zfiori_mag_qr_tmp WHERE flag EQ 'Q'.
 
           CLEAR: gs_outb02, gs_zmm_ol_trackingq.
@@ -534,208 +685,33 @@
 
         READ TABLE gt_zfiori_ris_tmp INTO gs_zfiori_ris_tmp WITH KEY vbeln = gv_ebeln.
 
-*************************************************
-*INVIO EMAIL
-        LOOP AT gt_zfiori_ris_tmp INTO gs_zfiori_ris_tmp. "sono quelle rifiutate
-          CLEAR: lv_causale, lv_mtart.
-          IF gs_zfiori_ris_tmp-motivo NE 'ACCETTAZ.RISERVA'.
-            SELECT
-            SINGLE lfart
-              FROM likp
-              INTO @DATA(lv_lfart_ca)
-             WHERE vbeln EQ @gs_zfiori_ris_tmp-vbeln.
+**! ABAP Doc: Sezione invio email rimossa come da requisito
 
-            SELECT SINGLE zid_causale INTO lv_causale
-              FROM zfiori_causali
-             WHERE descrizione = gs_zfiori_ris_tmp-motivo
-               AND tipo_consegna = lv_lfart_ca.
+**! ABAP Doc: Elaborazione record con motivo != blank - Salvataggio su ZMM_CONS_PARZ
+*       Questa è una nuova sezione aggiunta per salvare i record rifiutati su ZMM_CONS_PARZ
+        LOOP AT gt_zfiori_ris_tmp INTO gs_zfiori_ris_tmp WHERE motivo NE space.
 
-            SELECT SINGLE mtart INTO lv_mtart
-              FROM mara WHERE matnr = gs_zfiori_ris_tmp-matnr.
+          CLEAR gs_zmm_cons_parz.
+          gs_zmm_cons_parz-vbeln = gs_zfiori_ris_tmp-vbeln.
+          gs_zmm_cons_parz-posnr = gs_zfiori_ris_tmp-posnr.
+          gs_zmm_cons_parz-matnr = gs_zfiori_ris_tmp-matnr.
+          gs_zmm_cons_parz-motivo_cod = gs_zfiori_ris_tmp-motivo.
+          gs_zmm_cons_parz-motivo = gs_zfiori_ris_tmp-motivo.
+          gs_zmm_cons_parz-flag = gs_zfiori_ris_tmp-flag.
+          gs_zmm_cons_parz-lfdat = gs_zfiori_ris_tmp-lfdat.
+          gs_zmm_cons_parz-erdat = sy-datum.
+          gs_zmm_cons_parz-erzet = sy-uzeit.
+          gs_zmm_cons_parz-ernam = sy-uname.
 
-            IF lv_mtart NE 'ZABO' AND lv_mtart NE 'ZCDO'.
-              SELECT
-          SINGLE *
-            FROM zmm_deliv_mat
-            INTO @DATA(ls_deliv)
-            WHERE matnr EQ @gs_zfiori_ris_tmp-matnr.
-              IF sy-subrc IS INITIAL.
-                CONCATENATE lv_mtart(3) 'O' INTO lv_mtart.
-              ENDIF.
-            ENDIF.
+          APPEND gs_zmm_cons_parz TO gt_zmm_cons_parz.
 
-            SELECT SINGLE * INTO ls_zfiori_mail
-              FROM zfiori_mail
-              WHERE bukrs = 'OF01'
-              AND werks = 'OF01'
-              AND app_fiori = 'GR'
-              AND zid_causale = lv_causale
-              AND mtart = lv_mtart.
-
-            COLLECT ls_zfiori_mail INTO lt_zfiori_mail.
-            "LM Start Ticket#2023102099003089 24.10.2023
-          ELSE.
-            SELECT SINGLE mtart INTO lv_mtart
-              FROM mara WHERE matnr = gs_zfiori_ris_tmp-matnr.
-            "LM End Ticket#2023102099003089 24.10.2023
-
-          ENDIF.
         ENDLOOP.
-        IF lt_zfiori_mail IS NOT INITIAL. "gs_zfiori_ris_tmp-motivo eq 'ACCETTAZ.RISERVA'.
-          IF lt_zfiori_mail[] IS NOT INITIAL.
-            SELECT * INTO TABLE lt_zfiori_gruppi
-              FROM zfiori_gruppi
-              FOR ALL ENTRIES IN lt_zfiori_mail
-              WHERE z_gruppo = lt_zfiori_mail-z_gruppo.
-          ENDIF.
-***estraggo le utenze cui inviare l'email dal set
-*          CALL FUNCTION 'G_SET_GET_ID_FROM_NAME'
-*            EXPORTING
-*              shortname                = 'Z_USER_MAIL_FIORI'
-*            IMPORTING
-*              new_setid                = v_setid
-*            EXCEPTIONS
-*              no_set_found             = 1
-*              no_set_picked_from_popup = 2
-*              wrong_class              = 3
-*              wrong_subclass           = 4
-*              table_field_not_found    = 5
-*              fields_dont_match        = 6
-*              set_is_empty             = 7
-*              formula_in_set           = 8
-*              set_is_dynamic           = 9
-*              OTHERS                   = 10.
-*
-*          IF sy-subrc EQ 0.
-*
-*            CALL FUNCTION 'G_SET_GET_ALL_VALUES'
-*              EXPORTING
-*                setnr         = v_setid
-*              TABLES
-*                set_values    = t_values
-*              EXCEPTIONS
-*                set_not_found = 1
-*                OTHERS        = 2.
-*          ENDIF.
-*
-*          LOOP AT t_values INTO w_values WHERE field = 'BNAME'.
-          LOOP AT lt_zfiori_gruppi INTO ls_zfiori_gruppi.
 
-*            SELECT SINGLE * FROM usr21 INTO lw_usr21 WHERE bname = w_values-from.
-            SELECT SINGLE * FROM usr21 INTO lw_usr21 WHERE bname = ls_zfiori_gruppi-utente.
-            IF sy-subrc = 0.
-              SELECT SINGLE * FROM adr6  INTO lw_adr6
-                         WHERE addrnumber = lw_usr21-addrnumber
-                           AND persnumber = lw_usr21-persnumber.
-              IF sy-subrc = 0.
-                ls_mailrecipients-receiver = lw_adr6-smtp_addr.
-              ENDIF.
-* recipients
-              ls_mailrecipients-rec_type  = 'U'.
-              COLLECT ls_mailrecipients INTO lt_mailrecipients .
-*              APPEND ls_mailrecipients TO lt_mailrecipients.
-              CLEAR ls_mailrecipients .
-            ENDIF.
-          ENDLOOP.
-* Subject.
-          lt_mailsubject-obj_name = 'TEST'.
-          lt_mailsubject-obj_langu = sy-langu.
-          SELECT
-          SINGLE lfart
-            FROM likp
-            INTO @DATA(lv_tipoconsegna)
-           WHERE vbeln EQ @gv_ebeln.
-          IF lv_tipoconsegna EQ 'ZEL'.
-            CONCATENATE 'Notifica di Entrata Merci da Fiori - ' gv_ebeln INTO lt_mailsubject-obj_descr RESPECTING BLANKS.
-          ELSE.
-            lt_mailsubject-obj_descr = 'Notifica di Entrata Merci da Fiori'.
-          ENDIF.
-          CLEAR lv_tipoconsegna.
-          CLEAR wa_tab.
-          REFRESH it_tab.
-
-          CALL FUNCTION 'READ_TEXT'
-            EXPORTING
-*             CLIENT                  = SY-MANDT
-              id                      = 'ST'
-              language                = 'I'
-              name                    = 'ZMM_TESTOMAIL_NOTIFIC_EM'
-              object                  = 'TEXT'
-            TABLES
-              lines                   = it_tab
-            EXCEPTIONS
-              id                      = 1
-              language                = 2
-              name                    = 3
-              not_found               = 4
-              object                  = 5
-              reference_check         = 6
-              wrong_access_to_archive = 7
-              OTHERS                  = 8.
-          IF sy-subrc <> 0.
-* Implement suitable error handling here
-          ENDIF.
-
-** Mail Contents
-          IF it_tab[] IS NOT INITIAL.
-
-            LOOP AT it_tab INTO wa_tab.
-
-              CLEAR ls_mailtxt.
-              IF wa_tab-tdline CA 'X' OR wa_tab-tdline CA 'Y' OR wa_tab-tdline CA '$' OR wa_tab-tdline CO 'Z' OR wa_tab-tdline CA 'W'.
-                CONCATENATE sy-datum+6(2)'/' sy-datum+4(2)'/' sy-datum+0(4) INTO lv_data.
-                CONCATENATE sy-uzeit+0(2) ':' sy-uzeit+2(2) ':' sy-uzeit+4(2) INTO lv_ora.
-                REPLACE ALL OCCURRENCES OF 'X' IN wa_tab-tdline WITH  lv_data.
-                REPLACE ALL OCCURRENCES OF 'Y' IN wa_tab-tdline WITH  lv_ora.
-                REPLACE ALL OCCURRENCES OF '$' IN wa_tab-tdline WITH  gv_suser.
-                REPLACE ALL OCCURRENCES OF 'Z' IN wa_tab-tdline WITH  gv_lifex.
-              ENDIF.
-              MOVE wa_tab-tdline TO ls_mailtxt-line.
-              APPEND ls_mailtxt TO lt_mailtxt.
-            ENDLOOP.
-          ENDIF.
-
-
-          CLEAR ls_packing_list.
-          ls_packing_list-head_start = 1.
-          ls_packing_list-head_num = 0.
-          ls_packing_list-body_start = 1.
-          DESCRIBE TABLE lt_mailtxt LINES ls_packing_list-body_num.
-          ls_packing_list-doc_type = 'RAW'.
-          ls_packing_list-doc_size = ls_packing_list-body_num * 255.
-          APPEND ls_packing_list TO lt_packing_list.
-
-          IF lt_mailrecipients[] IS NOT INITIAL.
-            CALL FUNCTION 'SO_DOCUMENT_SEND_API1'
-              EXPORTING
-                document_data              = lt_mailsubject
-*               PUT_IN_OUTBOX              = ' '
-                sender_address             = 'FIORI_NOTIF'
-              TABLES
-                packing_list               = lt_packing_list
-                contents_txt               = lt_mailtxt
-                receivers                  = lt_mailrecipients
-              EXCEPTIONS
-                too_many_receivers         = 1
-                document_not_sent          = 2
-                document_type_not_exist    = 3
-                operation_no_authorization = 4
-                parameter_error            = 5
-                x_error                    = 6
-                enqueue_error              = 7
-                OTHERS                     = 8.
-            IF sy-subrc <> 0.
-*   Implement suitable error handling here
-            ENDIF.
-            IF sy-subrc EQ 0.
-              COMMIT WORK.
-
-*     Push mail out from SAP outbox
-              SUBMIT rsconn01 WITH mode = 'INT' AND RETURN.
-            ENDIF.
-          ENDIF.
+*       Salva i dati in ZMM_CONS_PARZ
+        IF gt_zmm_cons_parz IS NOT INITIAL.
+          MODIFY zmm_cons_parz FROM TABLE gt_zmm_cons_parz.
+          COMMIT WORK.
         ENDIF.
-*******************************************
 
 * GB Inserimento in tabella zfiori_mag_locl e BAPI solo in caso di successo FM
 *        ENDIF.
@@ -747,7 +723,7 @@
 
         CLEAR gs_zfiori_ris_tmp.
 
-        LOOP AT gt_zfiori_ris_tmp INTO gs_zfiori_ris_tmp. "solo quelle con quantit� rifiutata
+        LOOP AT gt_zfiori_ris_tmp INTO gs_zfiori_ris_tmp. "solo quelle con quantit� rifiutata
 
           CLEAR gs_lips.
           SELECT SINGLE * INTO gs_lips
@@ -1469,147 +1445,19 @@
         COMMIT WORK AND WAIT.
         WAIT UP TO 1 SECONDS.
 
-        IF gt_item IS NOT INITIAL. "almeno una posizione rifiutata
-          CALL FUNCTION 'BAPI_GOODSMVT_CREATE'
-            EXPORTING
-              goodsmvt_header       = gs_header
-              goodsmvt_code         = gs_code
-            TABLES
-              goodsmvt_item         = gt_item
-              goodsmvt_serialnumber = gt_sernr
-              return                = gt_return.
+**! ABAP Doc: Sezioni BAPI_GOODSMVT_CREATE per record rifiutati (motivo != blank) rimosse
+**! Come da requisito, non si creano più movimenti merce per i record con motivo diverso da blank
+**! I record rifiutati vengono solo salvati nelle tabelle custom (ZFIORI_MAG_LOCL e ZMM_CONS_PARZ)
 
-*FG - Start
-          IF gt_return[] IS NOT INITIAL.
-            LOOP AT gt_return INTO gs_return WHERE type CA 'EA'.
-              MOVE-CORRESPONDING gs_return TO wa_log_bapi.
-              wa_log_bapi-mandt = sy-mandt.
-              wa_log_bapi-in_idnum = gv_ebeln.
-*                wa_log_bapi-in_iditem = tb_rec_corretti-in_iditem.
-              MOVE gs_return-number TO wa_log_bapi-znumber.
-              "messaggio errore a fiori
-              lo_container->add_message(
-            iv_msg_type          = gs_prot-msgty
-            iv_msg_id            = wa_log_bapi-id
-            iv_msg_number        = wa_log_bapi-znumber
-            iv_msg_v1            = wa_log_bapi-message_v1
-            iv_msg_v2            = wa_log_bapi-message_v2
-            iv_msg_v3            = wa_log_bapi-message_v3
-            iv_msg_v4            = 'BAPI_GOODSMVT_CREATE per Fiori'
-            iv_is_leading_message     = abap_true
-            iv_add_to_response_header = abap_true ).
-
-*popolo tabella di log su backend in caso di errori
-              CALL FUNCTION 'BAPI_MESSAGE_GETDETAIL'
-                EXPORTING
-                  id         = wa_log_bapi-id
-                  number     = wa_log_bapi-znumber
-                  language   = sy-langu
-                  textformat = 'NON'
-                  message_v1 = wa_log_bapi-message_v1
-                  message_v2 = wa_log_bapi-message_v2
-                  message_v3 = wa_log_bapi-message_v3
-                IMPORTING
-                  message    = wa_log_bapi-message.
-
-              wa_log_bapi-message_v4 = 'BAPI_GOODSMVT_CREATE per Fiori'.
-              wa_log_bapi-datum = sy-datum.
-              wa_log_bapi-uzeit = sy-uzeit.
-              wa_log_bapi-nome_report = sy-repid.
-              MODIFY zmm_log_bapi FROM wa_log_bapi.
-              COMMIT WORK.
-              v = 1.
-            ENDLOOP.
-
-          ELSE.
-            CALL FUNCTION 'BAPI_TRANSACTION_COMMIT'
-              EXPORTING
-                wait = 'X'.
-*GB In caso di esito positivo aggiornare stato=2
-*            ENDIF.  "GB
-*FG - End
-*            IF sy-subrc NE 0. "GB
-            UPDATE zfiori_mag_locl SET stato = '2' WHERE vbeln = gv_lifex.
-
-
-          ENDIF.
-        ENDIF.
-
-        CLEAR: gt_return[],gs_return.
-
-        IF gt_item2 IS NOT INITIAL..
-          CALL FUNCTION 'BAPI_GOODSMVT_CREATE'
-            EXPORTING
-              goodsmvt_header       = gs_header
-              goodsmvt_code         = gs_code
-            TABLES
-              goodsmvt_item         = gt_item2
-              goodsmvt_serialnumber = gt_sernr2
-              return                = gt_return.
-
-*FG - Start
-          IF gt_return[] IS NOT INITIAL.
-            LOOP AT gt_return INTO gs_return WHERE type CA 'EA'.
-              MOVE-CORRESPONDING gs_return TO wa_log_bapi.
-              wa_log_bapi-mandt = sy-mandt.
-              wa_log_bapi-in_idnum = gv_ebeln.
-*                wa_log_bapi-in_iditem = tb_rec_corretti-in_iditem.
-              MOVE gs_return-number TO wa_log_bapi-znumber.
-              "messaggio errore a fiori
-              lo_container->add_message(
-            iv_msg_type          = gs_prot-msgty
-            iv_msg_id            = wa_log_bapi-id
-            iv_msg_number        = wa_log_bapi-znumber
-            iv_msg_v1            = wa_log_bapi-message_v1
-            iv_msg_v2            = wa_log_bapi-message_v2
-            iv_msg_v3            = wa_log_bapi-message_v3
-            iv_msg_v4            = 'BAPI_GOODSMVT_CREATE per Fiori'
-            iv_is_leading_message     = abap_true
-            iv_add_to_response_header = abap_true ).
-
-*popolo tabella di log su backend in caso di errori
-              CALL FUNCTION 'BAPI_MESSAGE_GETDETAIL'
-                EXPORTING
-                  id         = wa_log_bapi-id
-                  number     = wa_log_bapi-znumber
-                  language   = sy-langu
-                  textformat = 'NON'
-                  message_v1 = wa_log_bapi-message_v1
-                  message_v2 = wa_log_bapi-message_v2
-                  message_v3 = wa_log_bapi-message_v3
-                IMPORTING
-                  message    = wa_log_bapi-message.
-
-              wa_log_bapi-message_v4 = 'BAPI_GOODSMVT_CREATE per Fiori'.
-              wa_log_bapi-datum = sy-datum.
-              wa_log_bapi-uzeit = sy-uzeit.
-              wa_log_bapi-nome_report = sy-repid.
-              MODIFY zmm_log_bapi FROM wa_log_bapi.
-              COMMIT WORK.
-              v = 1.
-            ENDLOOP.
-
-          ELSE.
-            CALL FUNCTION 'BAPI_TRANSACTION_COMMIT'
-              EXPORTING
-                wait = 'X'.
-*GB In caso di esito positivo aggiornare stato=2
-*            ENDIF.  "GB
-*FG - End
-*            IF sy-subrc NE 0. "GB
-            UPDATE zfiori_mag_locl SET stato = '2' WHERE vbeln = gv_lifex.
-
-
-          ENDIF.
-          IF v EQ 0.
-            lo_container->add_message(
+*       Messaggio di successo
+        IF v EQ 0.
+          lo_container->add_message(
            iv_msg_type          = 'S'
            iv_msg_id            = 'ZMM'
            iv_msg_number        = 039
            iv_msg_v1            = ''
            iv_is_leading_message     = abap_true
            iv_add_to_response_header = abap_true ).
-          ENDIF.
         ENDIF.
 
 *    GB
