@@ -7,7 +7,7 @@
 **ENDTRY.
 
 *** PL 21102025 alla fine di questo metodo si riporta il metodo
-*** ZCL_ZMM_FIORI_ACCET_RI_DPC_EXT-CHANGESET_END dal quale si è preso
+*** ZCL_ZMM_FIORI_ACCET_RI_DPC_EXT-CHANGESET_END dal quale si ï¿½ preso
 *** inizialmente spunto
 
 
@@ -212,7 +212,8 @@
           lf_err,
           lf_xabln       TYPE xabln,
           lv_sydatum     TYPE datum,
-          lv_syuzeit     TYPE uzeit.
+          lv_syuzeit     TYPE uzeit,
+          lv_qta_sum     TYPE zqta_tot.
 
     DATA: ls_storico TYPE zfiori_mag_stori.
     DATA: lt_storico TYPE TABLE OF zfiori_mag_stori.
@@ -320,16 +321,33 @@
           lf_xabln = ls_cons-xabln.
           lf_zcodimpresa = ls_cons-zcodimpresa.
 
-* controllo qta accettata uguale alla qta totale inviata (non sono ammesse accettazioni parziali)
-          IF <ls_det>-qta_acc NE ls_cons-lfimg.
-            lf_err = 'X'.
-            <ls_det>-errore = 'E03Errore, la qta accettata deve essere uguale alla qta inviata'.
-          ENDIF.
         ENDIF.
       ENDLOOP.
 
+* controllo qta accettata uguale alla qta totale inviata (non sono ammesse accettazioni parziali)
+* la somma delle quantitï¿½ dei record di input con lo stesso idrec va confrontata con lfimg
+      IF lf_err NE 'X'.
+        LOOP AT lt_cons INTO ls_cons.
+          CLEAR lv_qta_sum.
+          LOOP AT lt_det INTO ls_det WHERE idrec = ls_cons-idrec.
+            IF ls_det-motivo EQ space.
+              lv_qta_sum = lv_qta_sum + ls_det-qta_acc.
+            ELSE.
+              lv_qta_sum = lv_qta_sum + ls_det-qta_rif.
+            ENDIF.
+          ENDLOOP.
+
+          IF lv_qta_sum NE ls_cons-lfimg.
+            lf_err = 'X'.
+            LOOP AT lt_det ASSIGNING <ls_det> WHERE idrec = ls_cons-idrec.
+              <ls_det>-errore = 'E03Errore, la qta accettata deve essere uguale alla qta inviata'.
+            ENDLOOP.
+          ENDIF.
+        ENDLOOP.
+      ENDIF.
+
       IF lf_err = 'X'.
-* se c'è un errore in una posizione va scartata tutta la consegna
+* se c'ï¿½ un errore in una posizione va scartata tutta la consegna
         LOOP AT lt_det INTO ls_det.
           CLEAR ls_esiti.
           MOVE-CORRESPONDING ls_det TO ls_esiti.
@@ -358,7 +376,7 @@
       ENDIF.
 
 
-***** controllo se la consegna è stata già elaborata
+***** controllo se la consegna ï¿½ stata giï¿½ elaborata
       SELECT COUNT(*) INTO @DATA(lf_count)
             FROM zmm_esiti_flaut
             WHERE codice_flusso = 'CONS'
@@ -367,7 +385,7 @@
               AND cod_esito NOT LIKE 'E%'.
 
       IF lf_count > 0.
-* la consegna va scartata perchè già processata
+* la consegna va scartata perchï¿½ giï¿½ processata
         LOOP AT lt_det INTO ls_det.
           CLEAR ls_esiti.
           MOVE-CORRESPONDING ls_det TO ls_esiti.
@@ -377,7 +395,7 @@
           ls_esiti-data_elab = lv_sydatum.
           ls_esiti-ora_elab  = lv_syuzeit.
           ls_esiti-cod_esito = 'E05'.
-          ls_esiti-descr_esito = 'Errore, consegna già elaborata'.
+          ls_esiti-descr_esito = 'Errore, consegna giï¿½ elaborata'.
           APPEND ls_esiti TO lt_esiti.
         ENDLOOP.
 
@@ -390,7 +408,7 @@
       ENDIF.
 
 
-***** controllo se è un'accettazione totale, per ora non sono ammesse accettazioni parziali
+***** controllo se ï¿½ un'accettazione totale, per ora non sono ammesse accettazioni parziali
       CLEAR lf_err.
       LOOP AT lt_cons INTO ls_cons.
         READ TABLE lt_det ASSIGNING <ls_det> WITH KEY idrec = ls_cons-idrec.
@@ -616,7 +634,7 @@
 
 * DMND0012698 rep beg
 *        MOVE 'ACCETTATO'         TO ls_storico-motivo_rett.
-** imposta tutta la quantità del record come "accettata"
+** imposta tutta la quantitï¿½ del record come "accettata"
 *        MOVE <history>-lfimg     TO ls_storico-qta_acc.
         IF <history>-motivo EQ space.
           MOVE 'ACCETTATO'        TO ls_storico-motivo_rett.
@@ -751,7 +769,7 @@
 * quelli gestiti a seriale salva una tabellina a parte con i seriali
 * e pulisce il campo charg
 * DMND0012698 rep
-* crea il 101 solo per le quantità accettate
+* crea il 101 solo per le quantitï¿½ accettate
 *      LOOP AT lt_det ASSIGNING FIELD-SYMBOL(<ls_item>).
       LOOP AT lt_det ASSIGNING FIELD-SYMBOL(<ls_item>) WHERE motivo = space.
         CLEAR ls_det.
@@ -819,10 +837,10 @@
               gs_sernr-matdoc_itm = lv_tfill.
               CASE ls_det-tipo_gest.
                 WHEN 'Q'.
-* per i materiali gestiti a Qrcode (tipo_gest EQ 'Q') --> il serial number è nel campo QRSERNR e il qrcode è nel campo CHARG
+* per i materiali gestiti a Qrcode (tipo_gest EQ 'Q') --> il serial number ï¿½ nel campo QRSERNR e il qrcode ï¿½ nel campo CHARG
                   gs_sernr-serialno = <ls_sernr>-qrsernr.
                 WHEN 'S'.
-* per i materiali gestiti a Serial Number (tipo_gest EQ 'S') --> il serial number è nel campo CHARG
+* per i materiali gestiti a Serial Number (tipo_gest EQ 'S') --> il serial number ï¿½ nel campo CHARG
                   gs_sernr-serialno = <ls_sernr>-charg.
                 WHEN OTHERS.
               ENDCASE.
@@ -1841,7 +1859,7 @@
 ***
 ***        CLEAR gs_zfiori_ris_tmp.
 ***
-***        LOOP AT gt_zfiori_ris_tmp INTO gs_zfiori_ris_tmp. "solo quelle con quantità rifiutata
+***        LOOP AT gt_zfiori_ris_tmp INTO gs_zfiori_ris_tmp. "solo quelle con quantitï¿½ rifiutata
 ***
 ***          CLEAR gs_lips.
 ***          SELECT SINGLE * INTO gs_lips
